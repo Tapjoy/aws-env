@@ -83,6 +83,7 @@ func New(sess *session.Session) (*Manager, error) {
 // Populate environment variables with their secret values from either Secrets manager, SSM Parameter store or KMS.
 func (m *Manager) Populate() error {
 	env := make(map[string]string)
+	cache := make(map[string]string)
 	for _, v := range os.Environ() {
 		var (
 			found  bool
@@ -100,28 +101,35 @@ func (m *Manager) Populate() error {
 		// be present if we are dealing with a multi-value secret.
 		path, secretKey, isMultiValueSecret := strings.Cut(value, mvsDelimiter)
 
-		if strings.HasPrefix(path, ssmPrefix) {
-			secret, err = m.getParameter(strings.TrimPrefix(path, ssmPrefix))
-			if err != nil {
-				return fmt.Errorf("failed to get secret from parameter store: %q: %s", name, err)
-			}
+		if cachedSecret, ok := cache[path]; ok {
+			secret = cachedSecret
 			found = true
-		}
-		if strings.HasPrefix(path, smPrefix) {
-			secret, err = m.getSecretValue(strings.TrimPrefix(path, smPrefix))
-			if err != nil {
-				return fmt.Errorf("failed to get secret from secret manager: %q: %s", name, err)
+		} else {
+			if strings.HasPrefix(path, ssmPrefix) {
+				secret, err = m.getParameter(strings.TrimPrefix(path, ssmPrefix))
+				if err != nil {
+					return fmt.Errorf("failed to get secret from parameter store: %q: %s", name, err)
+				}
+				found = true
 			}
-			found = true
-		}
-		if strings.HasPrefix(path, kmsPrefix) {
-			secret, err = m.decrypt(strings.TrimPrefix(path, kmsPrefix))
-			if err != nil {
-				return fmt.Errorf("failed to decrypt kms secret: %q: %s", name, err)
+			if strings.HasPrefix(path, smPrefix) {
+				secret, err = m.getSecretValue(strings.TrimPrefix(path, smPrefix))
+				if err != nil {
+					return fmt.Errorf("failed to get secret from secret manager: %q: %s", name, err)
+				}
+				found = true
 			}
-			found = true
+			if strings.HasPrefix(path, kmsPrefix) {
+				secret, err = m.decrypt(strings.TrimPrefix(path, kmsPrefix))
+				if err != nil {
+					return fmt.Errorf("failed to decrypt kms secret: %q: %s", name, err)
+				}
+				found = true
+			}
 		}
 		if found {
+			cache[path] = secret
+
 			if isMultiValueSecret {
 				o := make(map[string]string)
 				if err := json.Unmarshal([]byte(secret), &o); err != nil {
