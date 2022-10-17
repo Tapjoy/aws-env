@@ -21,6 +21,7 @@ const (
 	ssmPrefix    = "ssm://"
 	kmsPrefix    = "kms://"
 	envDelmiter  = "="
+	verDelimiter = ":"
 	mvsDelimiter = "#"
 )
 
@@ -153,8 +154,16 @@ func (m *Manager) Populate() error {
 	return nil
 }
 
-func (m *Manager) getSecretValue(path string) (out string, err error) {
-	res, err := m.sm.GetSecretValue(&secretsmanager.GetSecretValueInput{SecretId: aws.String(path)})
+func (m *Manager) getSecretValue(fullPath string) (out string, err error) {
+	// : is not a legal character in secrets manager. I.e. it should only
+	// be present if we are dealing with a versioned secret.
+	path, versionId, isVersionedSecret := strings.Cut(fullPath, verDelimiter)
+
+	secretValueInput := secretsmanager.GetSecretValueInput{SecretId: aws.String(path)}
+	if isVersionedSecret {
+		secretValueInput.SetVersionId(versionId)
+	}
+	res, err := m.sm.GetSecretValue(&secretValueInput)
 	if err != nil {
 		return "", err
 	}
